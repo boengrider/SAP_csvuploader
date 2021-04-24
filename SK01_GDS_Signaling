@@ -1,0 +1,350 @@
+Option Explicit
+'###################################################
+'###################################################
+'##################### M A I N #####################
+'###################################################
+'###################################################
+'######## Constants #########
+' CN_$COLUMN_NAME
+Const CN_TIME = "Entry/Time"
+Const CN_USER = "Entry/Email"
+Const CN_MAIL = "Mail"
+Const CN_GDSNO = "GDN_No."
+Const CN_PARMA = "PARMA"
+Const CN_ICO = "ICO"
+Const CN_VAT = "VAT"
+Const CN_CUSTNAME = "Customer_name"
+Const CN_ADDR1 = "Address1"
+Const CN_ADDR2 = "Address2"
+Const CN_ADDR3 = "Address3"
+Const CN_PSC = "PSC"
+Const CN_CITY = "City"
+Const CN_CTRY = "Country"
+Const CN_CREDLIM = "CL"
+Const CN_ONSTOP = "OnStop"
+Const CN_SCORE = "Score"
+Const CN_PAYTRM = "PayTerm"
+Const CN_PAYMTD = "PayMethod"
+Const CSS = "<style>table, th, td { border-collapse: collapse; } td, th { padding: 5px; border: 1px solid #ddd; } th { text-align: left; background-color: #6897BB; } a { text-decoration:none; }</style>"
+Dim DDEBUG : DDEBUG = True
+Dim strDate : strDate = ""
+Dim numRecordsProcessed : numRecordsProcessed = 0 ' If 0 don't send message
+If DDEBUG Then
+	Debug.WriteLine "Debugging -> On"
+	Debug.WriteLine "Target date -> 2021-04-19"
+	strDate = "2021-04-19"
+Else
+	Debug.WriteLine "Debugging -> Off"
+	strDate = Year(Now) & "-" & Right(Month(Now)+100,2) & "-" & Right(Day(Now)+100,2)
+	debug.WriteLine "Target date -> " & strDate
+End If
+Dim strHtmlBody : strHtmlBody = "<HEAD>" & CSS & "<TITLE>SK01_GDS_Signaling</TITLE>" & vbCr & "</HEAD>" & vbCr & "<BODY>" _
+& "<p>Dobrý deň,<br>Táto správa je vygenerovaná automaticky na základe zmien v systéme GDS<br>Údaje vygenerované pre dátum: " & strDate & "</p>"
+Dim oVAT : Set oVAT = New EUVATChecker ' Instantiate the VAT checker object
+Dim rst : Set rst = CreateObject("Adodb.Recordset")  ' Instantiate the COM object
+Dim oCON : Set oCON = New DBConnect    				 ' Instantiate the DBConnect class                
+Dim oMAILER : Set oMAILER = New Mailer  			 ' Instantiate the Mailer class
+oMAILER.AddAdmin = "tomas.ac@volvo.com" 			 ' Initialize the oMAILER object
+'oMAILER.AddAdmin = "tomas.chudik@volvo.com"
+oCON.Initialize "DSN=VF19all;UID=skscr;PASSWORD=Script12;SYSTEM=VF19.IT.VOLVO.COM;DBQ=SKTH0PD01;DFTPKGLIB=QGPL;" _
+& "LANGUAGEID=ENU;PKG=QGPL/DEFAULT(IBM),2,0,1,0,512;QRYSTGLMT=-1;DESC=Client Access Express ODBC data source;TRANSLATE=1;SIGNON=1;" 
+' Query the database for the new customers
+Debug.WriteLine "Executing the SQL query -> New customers"
+Set rst = oCON.QueryDatabase("SKTH0PD01", "", "select a.JOTIME as """ & CN_TIME & """ , (select THF234.IZNAMY from THF234 where THF234.IZF092=a.jouser) as """ & CN_USER & """," _
+& "a.CSCUNO as """ & CN_GDSNO & """, a.CSIVLK as """ & CN_PARMA & """, a.CSCGCP as """ & CN_ICO & """, b.CRVATN as """ & CN_VAT & """, a.CSCNMZ as """ & CN_CUSTNAME & """," _
+& "a.CSSAD1 as """ & CN_ADDR1 & """, a.CSSAD2 as """ & CN_ADDR2 & """, a.CSADD3 as """ & CN_ADDR3 & """, a.CSPSCD as """ & CN_PSC & """, a.CSCITY as """ & CN_CITY & """," _
+& "a.CSCTRY as """ & CN_CTRY & """, b.CRCRDL as """ & CN_CREDLIM & """, b.CRGN01 as """ & CN_ONSTOP & """, a.CSCUCC as """ & CN_SCORE & """, c.RHDESC as """ & CN_PAYTRM & """," _
+& "case(b.CRCCCN) when '0' then 'Ext-H' when '1' then 'Int' when '3' then 'Ext-F' end as """ & CN_PAYMTD & """, (select THF234.IZEMAL from THF234 where THF234.IZF092=a.jouser) as """ & CN_MAIL & """ FROM skth0pd01.ahf071 a JOIN skth0pd01.ahf070 b ON b.CRCUNO " _
+& "= a.CSCUNO and a.joentt = b.joentt JOIN skth0pd01.thf450 c on b.CRPAYC = c.RHCODE WHERE b.JOPGM NOT IN ('THR1291') and a.jodate = '" & strDate & "' and a.joentt IN ('PT', 'PX')")
+strHtmlBody = strHtmlBody & "<br><p style=""color: red;""><b>Tabuľka nových zákazníkov</b></p>" _
+& "<table><th>Entry/Time</th><th>Entry/Email</th><th>GDS_No.</th><th>PARMA</th><th>ICO</th>" _
+& "<th>VAT</th><th>Customer name</th><th>Address 1</th><th>Address 2</th><th>Address 3</th>" _
+& "<th>PSC</th><th>City</th><th>Country</th><th>CL</th><th>OnStop</th>" _
+& "<th>Score</th><th>PayTerm</th><th>PayMethod</th></tr>"
+' Process the returned records and append to the HTML body
+Debug.WriteLine "Processing results -> New customers"
+Do While Not rst.EOF
+	numRecordsProcessed = numRecordsProcessed + 1
+	strHtmlBody = strHtmlBody & "<tr><td>" & Right("00" & Hour(rst.Fields(CN_TIME).Value),2) & ":" & Right("00" & Minute(rst.Fields(CN_TIME).Value),2) & ":" & Right("00" & Second(rst.Fields(CN_TIME).Value),2) & "</td><td><a href=""mailto:" & rst.Fields(CN_MAIL) & """>" & rst.Fields(CN_USER).Value & "</a></td><td>" & rst.Fields(CN_GDSNO).Value & "</td>"
+	If rst.Fields("PARMA").Value = "0" Then
+		strHtmlBody = strHtmlBody & "<td style=""background-color: #B40000"">" & rst.Fields("PARMA").Value & "</td>"
+	Else
+		strHtmlBody = strHtmlBody & "<td>" & rst.Fields("PARMA").Value & "</td>"
+	End If 
+	strHtmlBody = strHtmlBody & "<td>" & rst.Fields("ICO").Value & "</td>"
+	If oVAT.CheckVat(rst.Fields(CN_VAT).Value) = 1 Then
+		Debug.WriteLine "VAT number " & rst.Fields(CN_VAT).Value & " is a valid VAT number"
+		strHtmlBody = strHtmlBody & "<td>" & rst.Fields("VAT").Value & "</td>"
+	Else
+		strHtmlBody = strHtmlBody & "<td style=""backgrond-color: #B40000"">" & rst.Fields("VAT").Value & "</td>"
+		Debug.WriteLine "VAT number " & rst.Fields(CN_VAT).Value & " is not a valid VAT number"
+	End If 
+	strHtmlBody = strHtmlBody & "<td>" & rst.Fields("Customer_name").Value & "</td><td>" & rst.Fields("Address1").Value & "</td>" _
+	& "<td>" & rst.Fields("Address2").Value & "</td><td>" & rst.Fields("Address3").Value & "</td><td>" & rst.Fields("PSC").Value & "</td><td>" & rst.Fields("City").Value & "</td>" _
+	& "<td>" & rst.Fields("Country").Value & "</td><td>" & rst.Fields("CL").Value & "</td>" 
+	If rst.Fields(CN_ONSTOP) = "A" Then
+		strHtmlBody = "<td style=""background-color: #B40000"">" & rst.Fields(CN_ONSTOP).Value & "</td>"
+	Else 
+		strHtmlBody = strHtmlBody & "<td>" & rst.Fields(CN_ONSTOP).Value & "</td>"
+	End If
+	strHtmlBody = strHtmlBody & "<td>" & rst.Fields(CN_SCORE).Value & "</td><td>" & rst.Fields(CN_PAYTRM).Value & "</td>"
+	If rst.Fields(CN_PAYMTD).Value <> "Ext-F" Then 
+		strHtmlBody = strHtmlBody & "<td style=""background-color: #B40000"">" & rst.Fields(CN_PAYMTD).Value & "</td>"
+	Else 
+		strHtmlBody = strHtmlBody & "<td>" & rst.Fields(CN_PAYMTD).Value & "</td>"
+	End If 
+	rst.MoveNext
+Loop
+strHtmlBody = strHtmlBody & "</table><br><p style=""color: red;""><b>Tabuľka existujúcich zákazníkov</b></p>" _
+& "<table><tr><th>Entry/Time</th><th>Entry/Email</th><th>GDS_No.</th><th>PARMA</th><th>ICO</th>" _
+& "<th>VAT</th><th>Customer name</th><th>Address 1</th><th>Address 2</th><th>Address 3</th>" _
+& "<th>PSC</th><th>City</th><th>Country</th><th>CL</th><th>OnStop</th>" _
+& "<th>Score</th><th>PayTerm</th><th>PayMethod</th></tr>"
+' Query the dadtabase for the existing customers
+debug.WriteLine "Executing the SQL query -> Existing customers"
+Set rst = oCON.QueryDatabase("SKTH0PD01", "", "select a.JOTIME as """ & CN_TIME & """, (select THF234.IZNAMY from THF234 where THF234.IZF092=a.jouser) """ & CN_USER & """," _
+& "a.CSCUNO as """ & CN_GDSNO & """, a.CSIVLK as """ & CN_PARMA & """, a.CSCGCP as """ & CN_ICO & """, b.CRVATN as """ & CN_VAT & """, a.CSCNMZ as """ & CN_CUSTNAME & """," _
+& "a.CSSAD1 as """ & CN_ADDR1 & """, a.CSSAD2 as """ & CN_ADDR2 & """, a.CSADD3 as """ & CN_ADDR3 & """, a.CSPSCD as """ & CN_PSC & """, a.CSCITY as """ & CN_CITY & """," _
+& "a.CSCTRY as """ & CN_CTRY & """, b.CRCRDL as """ & CN_CREDLIM & """, b.CRGN01 as """ & CN_ONSTOP & """, a.CSCUCC as """ & CN_SCORE & """, c.RHDESC as """ & CN_PAYTRM & """," _
+& "case(b.CRCCCN) when '0' then 'Ext-H' when '1' then 'Int' when '3' then 'Ext-F' end as """ & CN_PAYMTD & """, (select THF234.IZEMAL from THF234 where THF234.IZF092=a.jouser) as """ & CN_MAIL & """ from ahf071 a join ahf070 b on a.cscuno = b.crcuno and a.jouser = b.jouser and a.joentt = b.joentt JOIN skth0pd01.thf450 c on b.CRPAYC = c.RHCODE where b.JOPGM NOT IN " _
+& "('THR1291') and a.jodate = '" & strDate & "' and a.jopgm <> 'THR1291' and a.joentt NOT IN ('PT', 'PX', 'DL')")
+' Process the returned records and append to the HTML body
+debug.WriteLine "Processing resutls -> Existing customers"
+Do While Not rst.EOF
+	numRecordsProcessed = numRecordsProcessed + 1
+	strHtmlBody = strHtmlBody & "<tr><td>" & Right("00" & Hour(rst.Fields(CN_TIME).Value),2) & ":" & Right("00" & Minute(rst.Fields(CN_TIME).Value),2) & ":" & Right("00" & Second(rst.Fields(CN_TIME).Value),2) & "</td><td><a href=""mailto:" & rst.Fields(CN_MAIL) & """>" & rst.Fields(CN_USER).Value & "</a></td><td>" & rst.Fields(CN_GDSNO).Value & "</td>"
+	If rst.Fields("PARMA").Value = "0" Then
+		strHtmlBody = strHtmlBody & "<td style=""background-color: #B40000"">" & rst.Fields("PARMA").Value & "</td>"
+	Else
+		strHtmlBody = strHtmlBody & "<td>" & rst.Fields("PARMA").Value & "</td>"
+	End If 
+	strHtmlBody = strHtmlBody & "<td>" & rst.Fields("ICO").Value & "</td>"
+	If oVAT.CheckVat(rst.Fields(CN_VAT).Value) = 1 Then
+		Debug.WriteLine "VAT number " & rst.Fields(CN_VAT).Value & " is a valid VAT number"
+		strHtmlBody = strHtmlBody & "<td>" & rst.Fields("VAT").Value & "</td>"
+	Else
+		debug.WriteLine "VAT number " & rst.Fields("VAT").Value & " is not a vlid VAT number"
+		strHtmlBody = strHtmlBody & "<td style=""background-color: #B40000"">" & rst.Fields(CN_VAT).Value & "</td>"
+	End If 
+	strHtmlBody = strHtmlBody & "<td>" & rst.Fields("Customer_name").Value & "</td><td>" & rst.Fields("Address1").Value & "</td>" _
+	& "<td>" & rst.Fields("Address2").Value & "</td><td>" & rst.Fields("Address3").Value & "</td><td>" & rst.Fields("PSC").Value & "</td><td>" & rst.Fields("City").Value & "</td>" _
+	& "<td>" & rst.Fields("Country").Value & "</td><td>" & rst.Fields("CL").Value & "</td><td>" & rst.Fields("OnStop").Value & "</td><td>" & rst.Fields("Score").Value & "</td>" _
+	& "<td>" & rst.Fields("PayTerm").Value & "</td><td>" & rst.Fields("PayMethod").Value & "</td></tr>"
+	rst.MoveNext
+Loop
+strHtmlBody = strHtmlBody & "</table><br><p>To je vsetko.</p><p>S pozdravom, tvoj GDS_Signaling BOT</p><p><i>Automatically generated message. Do not reply</i></p></BODY></HTML>"
+rst.Close				' Close the recordset
+debug.WriteLine "Closing " & oCON.ConnectionStatus & " connection -> " & oCON.ConnectionString
+oCON.CloseConnection    ' Close the connection
+If numRecordsProcessed > 0 Then
+	debug.WriteLine numRecordsProcessed & " records processed for the date " & strDate & vbCrLf & "Sending a reporting e-mail"
+	oMAILER.SendMessage WScript.ScriptName,strHtmlBody,"I" ' Send message
+Else
+	debug.WriteLine "0 records processed for the date " & strDate
+End If 
+WScript.Quit(0) 		' All OK
+'###################################################
+'###################################################
+'############## M A I N   E N D S  #################
+'###################################################
+'###################################################
+
+
+'##################################################
+'##################################################
+'####### C l a s s   D e f i n i t i o n s ########
+'##################################################
+'##################################################
+'----------------- EUVATChecker class -------------
+Class EUVATChecker
+
+	Private oHTTP
+	Private oXML
+	
+	Private Sub Class_Initialize()
+		Set oHTTP = CreateObject("MSXML2.XMLHTTP")
+		Set oXML = WScript.CreateObject("MSXML2.DOMDOCUMENT","Event_")
+	End Sub
+	
+	Private Sub Class_Terminate
+		Set oHTTP = Nothing
+		Set oXML = Nothing
+	End Sub 
+	
+	Private Function Event_onreadystatechanged()
+		Debug.WriteLine "Handler invoked"
+	End Function 
+	
+	Public Function CheckVat(strCtryCodeVatNumber)
+		Dim nodes, node
+		strCtryCodeVatNumber = Trim(strCtryCodeVatNumber)
+		Dim numVatLen : numVatLen = Len(strCtryCodeVatNumber)
+		Dim strCtryCod : strCtryCod = Left(strCtryCodeVatNumber,2)
+		Dim strVatNum : strVatNum = Right(strCtryCodeVatNumber, numVatLen - 2)
+		Dim strHtmlBody : strHtmlBody = "<s11:Envelope xmlns:s11='http://schemas.xmlsoap.org/soap/envelope/'>" _
+		& "<s11:Body><tns1:checkVat xmlns:tns1='urn:ec.europa.eu:taxud:vies:services:checkVat:types'>" _
+        & "<tns1:countryCode>" & strCtryCod & "</tns1:countryCode><tns1:vatNumber>" & strVatNum & "</tns1:vatNumber>" _
+    	& "</tns1:checkVat></s11:Body></s11:Envelope>"
+    	
+    	With oHTTP
+			.open "POST", "http://ec.europa.eu/taxation_customs/vies/services/checkVatService", False
+			.setRequestHeader "Accept", "application/xml"
+			.setRequestHeader "Content-Type", "application/xml; charset=utf-8"
+			.setRequestHeader "Content-Length", Len(strHtmlBody)
+			.send strHtmlBody
+		End With
+		
+		If Not oHTTP.Status = 200 Then
+			CheckVat = -1
+			Exit Function
+		End If 
+		
+		oXML.LoadXML oHTTP.ResponseText
+		Set nodes = oXML.getElementsByTagName("valid")
+		
+		For Each node In nodes 
+			If node.text = "true" Then
+				CheckVat = 1
+				Exit Function
+			Else
+				CheckVat = 0
+				Exit Function
+			End If 
+		Next 
+		
+		CheckVat = 0
+		Exit Function
+
+    End Function
+    
+End Class 
+
+'------------------ Mailer class ------------------
+Class Mailer
+
+	Private oEmail
+	Private oSysInfo
+	Private oUser
+	Private strAdmins
+	Private oNET
+	Private strUserName
+	Private strComputerName
+	
+	Private Sub Class_Initialize
+	
+		Set oEmail = CreateObject("CDO.Message")
+		Set oSysInfo = CreateObject("ADSystemInfo")
+		Set oUser = GetObject("LDAP://" & oSysInfo.UserName)
+		Set oNET = CreateObject("Wscript.Network")
+		strUserName = oNET.UserName
+		strComputerName = oNET.ComputerName
+		
+	End Sub 
+	
+	Private Sub Class_Terminate
+	
+	End Sub 
+	
+	Public Function SendMessageToOne(strTarget,strSubject,strMessage,strSeverity)
+		
+		With oEmail
+			.From = oUser.Mail
+			.To = strTarget
+			.Subject = strSubject
+			.Configuration.Fields.Item _
+			("http://schemas.microsoft.com/cdo/configuration/sendusing") = 2
+			.Configuration.Fields.Item _
+			("http://schemas.microsoft.com/cdo/configuration/smtpserver") = _
+    		"mailgot.it.volvo.net" 
+			.Configuration.Fields.Item _
+    		("http://schemas.microsoft.com/cdo/configuration/smtpserverport") = 25
+    		.HTMLBody = strMessage
+    		.Configuration.Fields.Item("urn:schemas:mailheader:X-MSMail-Priority") = "High"
+    		.Configuration.Fields.Item("urn:schemas:httpmail:importance") = 2
+			.Configuration.Fields.Item("urn:schemas:mailheader:X-Priority") = 2
+			.Configuration.Fields.Update
+			.Send
+		End With
+			
+	End Function
+	
+	Public Function SendMessage(strSubject,strMessage,strSeverity)
+		Dim admin,strFrom,oUser
+		Set oUser = GetObject("LDAP://" & oSysInfo.UserName)	
+			With oEmail 
+				.From = oUser.Mail
+				.To = strAdmins
+				.Subject = strSubject
+				.Configuration.Fields.Item _
+   				("http://schemas.microsoft.com/cdo/configuration/sendusing") = 2
+				.Configuration.Fields.Item _
+    			("http://schemas.microsoft.com/cdo/configuration/smtpserver") = _
+        		"mailgot.it.volvo.net" 
+				.Configuration.Fields.Item _
+  	    		("http://schemas.microsoft.com/cdo/configuration/smtpserverport") = 25
+  	    		.HTMLBody = strMessage
+  	    		.Configuration.Fields.Item("urn:schemas:mailheader:X-MSMail-Priority") = "High"
+  	    		.Configuration.Fields.Item("urn:schemas:httpmail:importance") = 2
+				.Configuration.Fields.Item("urn:schemas:mailheader:X-Priority") = 2
+				.Configuration.Fields.Update
+				.Send
+			End With 
+	End Function
+	
+	Public Property Let AddAdmin(strEmailAddress)
+		strAdmins = strAdmins & strEmailAddress & ";"
+	End Property 
+	
+	Public Property Get GetAdmins
+		GetAdmins = Left(strAdmins,Len(strAdmins) - 1)
+	End Property 
+	
+End Class 
+
+'------------------ DBConnect class ---------------
+Class DBConnect
+
+	Private oCON
+	Private oCMD
+	Private oRST
+
+	Private Sub Class_Initialize
+		Set oCON = WScript.CreateObject("ADODB.Connection")
+		Set oCON = CreateObject("ADODB.Connection")
+		Set oCMD = CreateObject("ADODB.Command")
+		Set oRST = CreateObject("ADODB.Recordset")
+	End Sub
+	
+'	Private Sub Class_Terminate
+'		If oCON.State = 3 Then
+			' nothing to do
+'		Else
+'			oCON.Close
+'		End If 
+'	End Sub
+
+	Public Sub Initialize(connectionString)
+    	oCON.Open connectionString
+	End Sub
+
+	Public Sub CloseConnection()
+    	oCON.Close
+	End Sub
+
+	Public Function QueryDatabase(db, tbl, query)
+   		Dim oRST_
+   		oCMD.ActiveConnection = oCON
+   		oCMD.CommandText = query
+   		Set oRST = oCMD.Execute
+  		Set QueryDatabase = oRST ' Return Recordset object. Set statement required since this is not a primitive type
+	End Function
+	
+	Public Property Get ConnectionStatus
+		ConnectionStatus = oCON.State
+	End Property 
+	
+	Public Property Get ConnectionString
+		ConnectionString = oCON.ConnectionString
+	End Property 
+
+End Class	
