@@ -196,6 +196,16 @@ WScript.Quit(0)
 '********* M A I N   E N D  *********
 '************************************
 
+
+
+
+'#################################
+'# Classes/Functions/Subroutines #
+'#################################
+
+'**************
+'UploadToSAP
+'**************
 Sub UploadToSAP
 		Randomize
 		arrFileParts(SESSIONNAME) = UCase(arrFileParts(SESSIONNAME)) & "-" & Right(CDbl(Rnd(1)) * (Second(Time) + Minute(Time)),5) ' Session from the file name + the 'randomly' generated suffix
@@ -244,9 +254,9 @@ End Sub
 
 
 
-'**************************
-'SM35 check function
-'**************************
+'**************
+'SM35
+'**************
 Sub SM35()
 	debug.WriteLine "SM35() -> SESSIONNAME: " & arrFileParts(SESSIONNAME)
 	Dim i,badmin
@@ -298,6 +308,9 @@ Sub SM35()
 	'Unable to verify file status after 25 seconds. Patch the record's 'details' column	
 End Sub
 
+'**************
+'PatchRecord
+'**************
 Sub PatchRecord(strJson)
 	With oHTTP
 		.open "PATCH", Replace(furl,"/File",""),False
@@ -310,7 +323,9 @@ Sub PatchRecord(strJson)
 	debug.WriteLine oHTTP.responseText
 End Sub 
 
-
+'**************
+'SpRestError
+'**************
 Sub SpRestError()
 	oXMLREST.loadXML oHTTP.responseText
 	oMAIL.SendMessageSAP "Error code: " & oXMLREST.selectSingleNode("//m:code").text & "<br>" _
@@ -318,7 +333,9 @@ Sub SpRestError()
 	WScript.Quit(oHTTP.status)
 End Sub 
 
-
+'**************
+'DownloadFile
+'**************
 Sub DownloadFile()
 	With oHTTP
 		.open "GET", furl & "/$value",False
@@ -335,6 +352,9 @@ Sub DownloadFile()
 	oSTREAM.Close
 End Sub 
 
+'**************
+'SP
+'**************
 Class SP
 	
 	Private oXML
@@ -1053,7 +1073,9 @@ Class SP
 End Class 
 
 
-
+'**************
+'Mailer
+'**************
 Class Mailer
 
 	Private oEmail
@@ -1152,7 +1174,9 @@ End Class
 
 
 
-
+'**************
+'SAPLauncher
+'**************
 Class SAPLauncher
 	
 	Private oHTTP
@@ -1494,7 +1518,9 @@ End Class
 
 
 
-
+'**************
+'Checkin
+'**************
 Function Checkin(sProjectName,sCredFilePath)
 	Dim sUserName,sUserSecret,sSiteUrl,sDomain,sTenantID,sClientID,sXDigest,sAccessToken,tmp,rxResult
 	Dim oHTTP : Set oHTTP = CreateObject("MSXML2.ServerXMLHTTP.3.0")
