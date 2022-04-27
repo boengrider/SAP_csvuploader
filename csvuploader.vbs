@@ -1,4 +1,5 @@
 Option Explicit
+Const PROJECT = "SK01_LOAD4ME"
 Const WDIR = "C:\!AUTO\SK01_SAP_CSV_UPLOADER"
 Const CRFILE = "C:\!AUTO\CREDENTIALS\logins.txt"
 Const COFILE = "C:\!AUTO\CONFIGURATION\LOAD4ME.conf"
@@ -53,6 +54,7 @@ Next
 
 'Verify arguments have been passed to the script
 If IsNull(strSAPSystem) Or IsNull(strSAPClient) Then 
+	Checkin PROJECT, CRFILE
 	WScript.Quit
 End If 
 
@@ -103,6 +105,7 @@ Set nodes = oXML.selectNodes("//entry//entry//d:Name")
 'No queued files, quit, send message and exit
 If nodes.length = 0 Then
 	oMAIL.SendMessageSAP Now & "<br>No queued files<br><br>","I",strSAPSystem
+	Checkin PROJECT, CRFILE
 	WScript.Quit
 End If 
 
@@ -185,6 +188,8 @@ For Each file In oFILES.Keys
 	strProcessingReport = strProcessingReport & file & " :::> " & oFILES.Item(file) & "<br>"
 Next 
 
+'wdapp - checkin
+Checkin PROJECT, CRFILE
 oMAIL.SendMessageSAP Now & "<br>Processing report<br><br>" & strProcessingReport,"I",strSAPSystem
 WScript.Quit(0)
 '************************************
@@ -1486,3 +1491,94 @@ Class SAPLauncher
 	
 		
 End Class 
+
+
+
+
+Function Checkin(sProjectName,sCredFilePath)
+	Dim sUserName,sUserSecret,sSiteUrl,sDomain,sTenantID,sClientID,sXDigest,sAccessToken,tmp,rxResult
+	Dim oHTTP : Set oHTTP = CreateObject("MSXML2.ServerXMLHTTP.3.0")
+	Dim oXML : Set oXML = CreateObject("MSXML2.DOMDocument")
+	Dim oRX : Set oRX = New RegExp
+	
+	'Load credentials
+	oXML.load sCredFilePath
+	sUserName = oXML.selectSingleNode("//service[@name=""unit-rc-sk-bs-it""]/username").text
+	sUserSecret = oXML.selectSingleNode("//service[@name=""unit-rc-sk-bs-it""]/password").text
+	sSiteUrl = oXML.selectSingleNode("//service[@name=""unit-rc-sk-bs-it""]/host").text
+	sDomain = oXML.selectSingleNode("//service[@name=""unit-rc-sk-bs-it""]/domain").text
+	
+	'Get TenantID & ClientID/ResourceID
+	With oHTTP
+		.open "GET",sSiteUrl & "/_vti_bin/client.svc",False
+		.setRequestHeader "Authorization","Bearer"
+		.send
+	End With
+		
+	oRX.Pattern = "Bearer realm=""([a-zA-Z0-9]{1,}-)*[a-zA-Z0-9]{12}"
+	Set rxResult = oRX.Execute(oHTTP.getResponseHeader("WWW-Authenticate"))
+	oRX.Pattern = "[a-fA-F0-9]{8}-([a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}"
+	sTenantID = oRX.Execute(rxResult(0))(0)
+	
+	oRX.Pattern = "client_id=""[a-fA-F0-9]{8}-([a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}"
+	Set rxResult = oRX.Execute(oHTTP.getResponseHeader("WWW-Authenticate"))
+	oRX.Pattern = "[a-fA-F0-9]{8}-([a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}"
+	sClientID = oRX.Execute(rxResult(0))(0)
+	
+	'Get AccessToken
+	Dim sBody : sBody = "grant_type=client_credentials&client_id=" & sUserName & "@" & sTenantID & "&client_secret=" & sUserSecret & "&resource=" & sClientID & "/" & sDomain & "@" & sTenantID
+	With oHTTP
+		.open "POST", "https://accounts.accesscontrol.windows.net/" & sTenantID & "/tokens/OAuth/2", False
+		.setRequestHeader "Host","accounts.accesscontrol.windows.net"
+		.setRequestHeader "Content-Type","application/x-www-form-urlencoded"
+		.setRequestHeader "Content-Length", CStr(Len(sBody))
+		.send sBody
+	End With 
+	
+	oRX.Pattern = "access_token"":"".*"
+	Set rxResult = oRX.Execute(oHTTP.responseText)
+	rxResult = Split(rxResult(0),":")
+	rxResult(1) = Replace(rxResult(1),"""","")
+	rxResult(1) = Replace(rxResult(1),"}","")
+	sAccessToken = rxResult(1) ' Save the token 
+	
+	'Get XDigest
+	With oHTTP
+		oHTTP.open "POST", sSiteUrl & "/_api/contextinfo", False 
+		oHTTP.setRequestHeader "accept","application/atom+xml;odata=verbose"
+		oHTTP.setRequestHeader "authorization", "Bearer " & sAccessToken
+		oHTTP.send
+	End With 
+	
+	oXML.loadXML oHTTP.responseText
+	sXDigest = oXML.selectSingleNode("//d:FormDigestValue").text
+	
+	
+	'Send query
+	With oHTTP
+		.open "GET", sSiteUrl & "/_api/web/lists/getbytitle('WDAPP')/items?$select=Title&$filter=(Title eq '" & sProjectName & "')", False        
+		.setRequestHeader "Authorization", "Bearer " & sAccessToken
+		.setRequestHeader "Accept", "application/atom+xml;odata=verbose"
+		.setRequestHeader "X-RequestDigest", sXDigest
+		.send
+	End With 
+	
+
+	'Patch record
+	Dim oNet : Set oNet = CreateObject("WScript.Network")
+	Dim oSysInfo : Set oSysInfo = CreateObject("ADSystemInfo")
+	Dim oLDAP : Set oLDAP = GetObject("LDAP://" & oSysInfo.UserName)
+	oXML.loadXML oHTTP.responseText
+	Dim url : url = oXML.selectSingleNode("//feed").attributes.getNamedItem("xml:base").text
+	url = url & oXML.selectSingleNode("//entry/link[@rel=""edit""]").attributes.getNamedItem("href").text
+  	
+	With oHTTP
+		.open "PATCH", url, False
+		.setRequestHeader "Accept","application/json;odata=verbose"
+		.setRequestHeader "Content-Type","application/json"
+		.setRequestHeader "Authorization","Bearer " & sAccessToken
+		.setRequestHeader "If-Match","*"
+		.send "{""ComputerName"":""" & Trim(oNet.ComputerName) & """,""UserName"":""" & Trim(oLDAP.displayName) & """,""UserID"":""" & Trim(oLDAP.sAMAccountName) & """}"
+	End With
+	
+End Function
